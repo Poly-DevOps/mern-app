@@ -1,56 +1,155 @@
-# MERN APP
+# TP2 DevOps : Docker et Docker Compose (application MERN)
 
-## Vue d'Ensemble
-Ce projet est une application full-stack qui consiste en un client React et un serveur Node.js utilisant MongoDB comme base de données. Docker est utilisé pour la conteneurisation, et Docker Compose est utilisé pour orchestrer les services.
+Containerisation d'une application MERN (MongoDB, Express, React, Node.js)
+avec Docker, puis orchestration avec Docker Compose.
 
-## Table des Matières
-- [Technologies Utilisées](#technologies-utilisées)
-- [Variables d'Environnement](#variables-denvironnement)
-- [Configuration de Docker](#configuration-de-docker)
-- [Images Docker](#images-docker)
-- [Docker Compose](#docker-compose)
-- [Comment Exécuter le Projet](#comment-executer-le-projet)
+## Structure du projet
 
-## Technologies Utilisées
-- **Frontend** : React
-- **Backend** : Node.js, Express
-- **Base de Données** : MongoDB
-- **Conteneurisation** : Docker, Docker Compose
+```
+mern-app/
+├── client/              # Application React
+│   ├── Dockerfile
+│   └── .dockerignore
+├── server/              # API Express
+│   ├── Dockerfile
+│   └── .dockerignore
+├── docker-compose.yml
+├── .env.example
+└── docs/screenshots/
+```
 
-## Variables d'Environnement
-Les variables d'environnement suivantes sont utilisées dans l'application :
+## Prérequis
 
-- **REACT_APP_API_URL** : Cette variable contient l'URL de base pour le serveur API. Elle est utilisée dans le client React pour faire des requêtes au serveur.
-- **MONGO_URI** : L'URI de connexion à MongoDB utilisée par le serveur pour se connecter à l'instance MongoDB.
+- Docker Desktop (moteur démarré) sous Windows avec WSL 2
+- Git
+- Ports 3000 et 9000 libres sur la machine
 
-## Configuration de Docker
-Ce projet comprend des Dockerfiles pour le client et le serveur, qui facilitent la construction et l'exécution des services dans des conteneurs isolés. Les configurations incluent :
+## Configuration
 
-- **Client** : Un environnement Node.js pour construire l'application React. Les dépendances sont installées et l'application est construite pour une utilisation en production. Un serveur HTTP simple peut être utilisé pour servir l'application construite.
-  
-- **Serveur** : Un environnement Node.js qui installe les dépendances nécessaires et configure l'application pour écouter sur un port spécifique.
+Les variables d'environnement sont documentees dans `.env.example`.
+Pour changer les valeurs, copier ce fichier en `.env` (non versionne) :
 
-## Images Docker
-Les images Docker créées pour ce projet sont les suivantes :
+```powershell
+Copy-Item .env.example .env
+```
 
-- **Image du Client** : `node:lts-alpine`
-- **Image du Serveur** : `node:lts-alpine`
-- **Image de la Base de Données** : `mongo:latest`
+| Variable | Rôle |
+|---|---|
+| `MONGO_URI` | URL de connexion à MongoDB. Dans Docker, l'hôte est le nom du service : `mongodb` |
+| `REACT_APP_API_URL` | URL de l'API **vue depuis le navigateur** (`http://localhost:9000`) |
 
-Ces images sont spécifiées dans les Dockerfiles respectifs et sont utilisées lors de la construction et du déploiement des services.
+Important : `REACT_APP_API_URL` est intégrée au bundle React lors du build.
+Le navigateur ne connaît pas les noms de services Docker : il faut donc
+`http://localhost:9000` et non `http://server:9000`.
 
-## Docker Compose
-Docker Compose est utilisé pour gérer les différents services de l'application, y compris le client, le serveur et MongoDB. Les services sont interconnectés, ce qui permet une communication fluide entre le client et le serveur. Le fichier de configuration spécifie les images, les ports exposés, ainsi que les variables d'environnement nécessaires pour chaque service.
+## Partie 1 : Déploiement manuel avec Docker
 
-## Comment Exécuter le Projet
-1. Assurez-vous d'avoir Docker et Docker Compose installés sur votre machine.
-2. Clonez ce dépôt sur votre machine locale.
-3. Accédez au répertoire du projet dans votre terminal.
-4. Construisez et démarrez l'application en utilisant Docker Compose :
+### Construction des images
 
-   ```bash
-   docker-compose up --build
-   ```
+```powershell
+cd server
+docker build -t mern-server .
+cd ..\client
+docker build -t mern-client .
+cd ..
+```
 
-5. Accédez au client à [http://localhost:3000](http://localhost:3000).
+### Réseau, volume et MongoDB
 
+```powershell
+docker network create mern-network
+docker volume create mern-data
+docker run -d --name mongodb --network mern-network -v mern-data:/data/db mongo
+```
+
+### Serveur et client
+
+```powershell
+docker run -d --name server --network mern-network -p 9000:9000 -e MONGO_URI=mongodb://mongodb:27017/mern mern-server
+docker run -d --name client --network mern-network -p 3000:3000 mern-client
+```
+
+Verification : `docker ps`, `docker logs server`, puis http://localhost:3000.
+
+![Conteneurs manuels](docs/screenshots/02-manual-containers.png)
+![Application](docs/screenshots/03-app-manual.png)
+
+Nettoyage avant de passer à Compose :
+
+```powershell
+docker rm -f client server mongodb
+docker network rm mern-network
+docker volume rm mern-data
+```
+
+## Partie 2 : Docker Compose
+
+Le fichier `docker-compose.yml` définit trois services sur le réseau
+`mern-network` (driver bridge) et un volume nommé `mern-data` :
+
+- `mongodb` : image `mongo`, volume persistant, politique de redémarrage
+  `unless-stopped` et healthcheck (`mongosh` ping).
+- `server` : build de `./server`, port 9000, `MONGO_URI`, démarre seulement
+  quand `mongodb` est `healthy` (`depends_on` avec `condition: service_healthy`).
+- `client` : build de `./client`, port 3000, dépend de `server`.
+
+### Commandes
+
+| Action | Commande |
+|---|---|
+| Construire et démarrer | `docker compose up --build -d` |
+| État des services | `docker compose ps` |
+| Logs d'un service | `docker compose logs --tail=50 server` |
+| Arrêter (données conservées) | `docker compose down` |
+| Arrêter et supprimer les données | `docker compose down -v` |
+
+![docker compose up](docs/screenshots/04-compose-up.png)
+![docker compose ps](docs/screenshots/05-compose-ps.png)
+![Logs du serveur](docs/screenshots/06-server-logs.png)
+
+## Tests effectués
+
+1. **Bout en bout** : depuis http://localhost:3000, ajout, modification et
+   suppression d'un enregistrement (React, API Express, MongoDB).
+
+   ![CRUD](docs/screenshots/07-app-crud.png)
+
+2. **Persistance** : `docker compose down` (sans `-v`), vérification que le
+   volume `mern-data` existe toujours, puis `docker compose up -d`.
+   L'enregistrement créé avant l'arrêt est toujours présent.
+
+   ![Volume](docs/screenshots/08-volume-after-down.png)
+   ![Persistance](docs/screenshots/09-persistence.png)
+
+## Diagnostiquer un service qui échoue au démarrage
+
+1. `docker compose ps -a` : repérer l'état (`Exited`, `Restarting`, `unhealthy`).
+2. `docker compose logs --tail=50 <service>` : lire l'erreur.
+3. `docker inspect <conteneur>` ou `docker compose config` : vérifier variables
+   d'environnement, réseau et healthcheck.
+4. `docker compose exec <service> sh` : tester depuis l'intérieur
+   (par exemple `ping mongodb`).
+5. Corriger puis `docker compose up --build -d`.
+
+Causes fréquentes : `MONGO_URI` pointant vers `localhost` au lieu de `mongodb`,
+serveur démarré avant MongoDB, port déjà utilisé sur la machine.
+
+## Difficultés rencontrées et solutions
+
+- **Moteur Docker injoignable** (`failed to connect to the docker API`) :
+  Docker Desktop n'était pas démarré. Solution : le lancer et attendre
+  "Engine running".
+- **Port 3000 déjà utilisé** (`ports are not available`) : un autre processus
+  occupait le port. Identifié avec `Get-NetTCPConnection -LocalPort 3000`,
+  puis arrêté avec `Stop-Process`.
+- **Fichiers `.env` versionnés** : `client/.env` et `server/.env` étaient suivis
+  par Git. Retirés avec `git rm --cached`, ajoutés au `.gitignore`, et
+  remplacés par `.env.example`.
+- **URL de l'API côté client** : utiliser `http://localhost:9000` (appel fait
+  par le navigateur) et non le nom du service Docker.
+- **Noms d'images avec Compose** : Compose préfixe les images avec le nom du
+  dossier (`mern-app-server`, `mern-app-client`).
+
+## Partie 3 : Projet micro-services
+
+(à compléter)
