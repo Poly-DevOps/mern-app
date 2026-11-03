@@ -1,0 +1,68 @@
+{
+  "family": "mern-tp21",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/LabRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/LabRole",
+  "containerDefinitions": [
+    {
+      "name": "mongodb",
+      "image": "mongo:7",
+      "essential": true,
+      "healthCheck": {
+        "command": ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" || exit 1"],
+        "interval": 10,
+        "timeout": 5,
+        "retries": 5,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mern-tp21",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "mongodb"
+        }
+      }
+    },
+    {
+      "name": "server",
+      "image": "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mern-server:v1",
+      "essential": true,
+      "portMappings": [{ "containerPort": 9000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "MONGO_URI", "value": "mongodb://127.0.0.1:27017/employees" }
+      ],
+      "dependsOn": [{ "containerName": "mongodb", "condition": "HEALTHY" }],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mern-tp21",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "server"
+        }
+      }
+    },
+    {
+      "name": "client",
+      "image": "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mern-client:v1",
+      "essential": true,
+      "portMappings": [{ "containerPort": 80, "protocol": "tcp" }],
+      "dependsOn": [{ "containerName": "server", "condition": "START" }],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mern-tp21",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "client"
+        }
+      }
+    }
+  ]
+}
